@@ -1,14 +1,15 @@
 import cgi
 import shutil
 import sqlite3
+import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory, TemporaryFile
 from typing import Union
 from urllib.parse import urlparse
 
 import click
-from click.exceptions import ClickException
 import requests
+from click.exceptions import ClickException
 from click_aliases import ClickAliasedGroup
 
 MIRROR_DIR = Path.home().joinpath(".mirror")
@@ -54,7 +55,7 @@ def add_file(url: str, filename: Path, mode: int):
 	print(f"Adding {url}")
 	try:
 		filename = download_file(url, filename)
-	except (ValueError, FileExistsError) as e:
+	except (ValueError, FileExistsError, requests.exceptions.HTTPError) as e:
 		raise ClickException(str(e)) from e
 	filename.chmod(mode)
 	with conn:
@@ -100,7 +101,7 @@ def update_files():
 			print(f"Updating {shortern_path(filename)} with {url}")
 			try:
 				download_file(url, filename, archive_filename, exist_ok=True)
-			except (ValueError, FileExistsError) as e:
+			except (ValueError, FileExistsError, requests.exceptions.HTTPError) as e:
 				raise ClickException(str(e)) from e
 	print("Updated!")
 
@@ -109,6 +110,8 @@ def update_files():
 @click.option("--glob", "-g", is_flag=True)
 def remove_file(filename: str, glob: bool):
 	print(f"Deleting {shortern_path(filename)}")
+	if not Path(filename).exists():
+		warnings.warn("File doesn't exist in filesystem")
 	if not glob and not file_in_db(Path(filename)):
 		raise ValueError(f"File {shortern_path(filename)} not in database")
 	
@@ -131,11 +134,11 @@ def download_file(
 	resp = requests.get(url)
 	resp.raise_for_status()
 	#get the filename from the response
-	if "Content-Disposition" in resp.headers:
+	try:
 		resp_filename = SAVE_DIR.joinpath("a").with_name(
 			cgi.parse_header(resp.headers["Content-Disposition"])[1]["filename"]
 		)
-	else:
+	except KeyError:
 		resp_filename = SAVE_DIR.joinpath(urlparse(url).path.split("/")[-1])
 	
 	if filename is None:
@@ -145,6 +148,8 @@ def download_file(
 			filename = resp_filename
 	else:
 		filename = Path(filename)
+	if filename == SAVE_DIR:
+		raise ValueError("Empty filename")
 	#check if file exists in db
 	if filename.exists() and not exist_ok:
 		if file_in_db(filename):
@@ -166,13 +171,9 @@ def download_file(
 	return filename
 
 def file_in_db(filename: Path) -> bool:
-	if filename.exists():
-		with conn:
-			cursor.execute(
-				"SELECT COUNT(filename) FROM mirrors WHERE filename = ?", (str(filename), )
-			)
-			return cursor.fetchone()[0] > 0
-	return False
+	with conn:
+		cursor.execute("SELECT COUNT(filename) FROM mirrors WHERE filename = ?", (str(filename), ))
+		return cursor.fetchone()[0] > 0
 
 def shortern_path(filename: Union[str, Path]) -> str:
 	#shorten /home/user/ to ~

@@ -1,2 +1,3 @@
 # mirror
-syncs local files with remote files using HTTP
+
+mirrors remote files using HTTP
