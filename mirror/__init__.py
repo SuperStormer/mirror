@@ -162,10 +162,9 @@ def download_file(
 	else:
 		# archive handling
 		# uses partition on .name instead of .suffix due to .tar.gz
-		with NamedTemporaryFile(suffix=resp_filename.name.partition(".")[2]) as f:
+		with NamedTemporaryFile(suffix="."+resp_filename.name.partition(".")[2]) as f:
 			with TemporaryDirectory() as tmp_dir:
 				f.write(resp.content)
-				print(f.name)
 				shutil.unpack_archive(f.name, tmp_dir)
 				shutil.copyfile(Path(tmp_dir).joinpath(archive_filename), filename)
 	return filename
