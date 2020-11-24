@@ -19,6 +19,7 @@ conn: sqlite3.Connection = None
 cursor: sqlite3.Cursor = None
 
 class OctalParamType(click.ParamType):
+	"""chmod-like octal parameters"""
 	name = "integer"
 	
 	def convert(self, value, param, ctx):
@@ -32,14 +33,17 @@ OCTAL_PARAM = OctalParamType()
 def main():
 	global conn
 	global cursor
+	#create dirs
 	SAVE_DIR.mkdir(parents=True, exist_ok=True)
 	DB_PATH.touch(exist_ok=True)
+	#setup db
 	conn = sqlite3.connect(DB_PATH)
 	cursor = conn.cursor()
 	with conn:
 		cursor.execute(
 			"CREATE TABLE IF NOT EXISTS mirrors (filename text, url text, archive_filename text);"
 		)
+	#run cli
 	mirror()
 	conn.close()
 
@@ -110,11 +114,12 @@ def update_files():
 @click.option("--glob", "-g", is_flag=True)
 def remove_file(filename: str, glob: bool):
 	print(f"Deleting {shortern_path(filename)}")
+	#error handling
 	if not Path(filename).exists():
 		warnings.warn("File doesn't exist in filesystem")
 	if not glob and not file_in_db(Path(filename)):
 		raise ValueError(f"File {shortern_path(filename)} not in database")
-	
+	#handle db
 	with conn:
 		if glob:
 			conn.execute("DELETE FROM mirrors WHERE filename GLOB ?", (filename, ))
@@ -162,20 +167,33 @@ def download_file(
 	else:
 		# archive handling
 		# uses partition on .name instead of .suffix due to .tar.gz
-		with NamedTemporaryFile(suffix="."+resp_filename.name.partition(".")[2]) as f:
+		with NamedTemporaryFile(suffix="." + resp_filename.name.partition(".")[2]) as f:
 			with TemporaryDirectory() as tmp_dir:
+				#unpack into tmp_dir
 				f.write(resp.content)
 				shutil.unpack_archive(f.name, tmp_dir)
-				shutil.copyfile(Path(tmp_dir).joinpath(archive_filename), filename)
+				#path to copy from
+				old_path = Path(tmp_dir).joinpath(archive_filename)
+				if old_path.is_file():
+					shutil.copyfile(old_path, filename)
+				elif old_path.is_dir():
+					try:
+						shutil.rmtree(filename)
+					except FileNotFoundError: #ignore if target directory doesn't exist
+						pass
+					shutil.copytree(old_path, filename)
+				else:
+					raise ValueError(f"File {archive_filename} isn't a file or a directory")
 	return filename
 
 def file_in_db(filename: Path) -> bool:
+	"""check if file is in the database"""
 	with conn:
 		cursor.execute("SELECT COUNT(filename) FROM mirrors WHERE filename = ?", (str(filename), ))
 		return cursor.fetchone()[0] > 0
 
 def shortern_path(filename: Union[str, Path]) -> str:
-	#shorten /home/user/ to ~
+	"""shorten /home/user/ to ~"""
 	filename = Path(filename)
 	try:
 		return "~/" + str(filename.relative_to(Path.home()))
