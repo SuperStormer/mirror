@@ -64,7 +64,7 @@ def add_file(url: str, filename: Path, mode: int):
 	filename.chmod(mode)
 	with conn:
 		cursor.execute("INSERT INTO mirrors VALUES(?, ?, ?)", (str(filename), url, None))
-	print(f"Added {url} at {shortern_path(filename)}")
+	print(f"Added {url} at {shorten_path(filename)}")
 
 @mirror.command(aliases=["add-ar", "adda"])
 @click.argument("url")
@@ -82,7 +82,7 @@ def add_archive(url: str, archive_filename, filename: Path, mode: int):
 		cursor.execute(
 			"INSERT INTO mirrors VALUES(?, ?, ?)", (str(filename), url, archive_filename)
 		)
-	print(f"Added archive {url} at {shortern_path(filename)}")
+	print(f"Added archive {url} at {shorten_path(filename)}")
 
 @mirror.command(aliases=["list", "ls", "l"])
 def list_files():
@@ -92,7 +92,7 @@ def list_files():
 		found = False
 		for filename, url in mirrors:
 			found = True
-			print(f"{shortern_path(filename):30} {url}")
+			print(f"{shorten_path(filename):30} {url}")
 		if not found:
 			print("None")
 
@@ -102,7 +102,7 @@ def update_files():
 		for filename, url, archive_filename in cursor.execute(
 			"SELECT filename, url, archive_filename FROM mirrors"
 		):
-			print(f"Updating {shortern_path(filename)} with {url}")
+			print(f"Updating {shorten_path(filename)} with {url}")
 			try:
 				download_file(url, filename, archive_filename, exist_ok=True)
 			except (ValueError, FileExistsError, requests.exceptions.HTTPError) as e:
@@ -113,19 +113,20 @@ def update_files():
 @click.argument("filename")
 @click.option("--glob", "-g", is_flag=True)
 def remove_file(filename: str, glob: bool):
-	print(f"Deleting {shortern_path(filename)}")
+	path = Path(filename).expanduser().resolve()  #convert relative path to absolute
+	print(f"Deleting {shorten_path(path)}")
 	#error handling
-	if not Path(filename).exists():
+	if not path.exists():
 		warnings.warn("File doesn't exist in filesystem")
-	if not glob and not file_in_db(Path(filename)):
-		raise ValueError(f"File {shortern_path(filename)} not in database")
+	if not glob and not file_in_db(path):
+		raise ClickException(f"File {shorten_path(path)} not in database")
 	#handle db
 	with conn:
 		if glob:
-			conn.execute("DELETE FROM mirrors WHERE filename GLOB ?", (filename, ))
+			conn.execute("DELETE FROM mirrors WHERE filename GLOB ?", (str(path), ))
 		else:
-			conn.execute("DELETE FROM mirrors WHERE filename = ?", (filename, ))
-	print(f"Deleted {shortern_path(filename)}")
+			conn.execute("DELETE FROM mirrors WHERE filename = ?", (str(path), ))
+	print(f"Deleted {shorten_path(path)}")
 
 @mirror.command()
 def delete_db():
@@ -153,14 +154,15 @@ def download_file(
 			filename = resp_filename
 	else:
 		filename = Path(filename)
+	filename = filename.expanduser().resolve()  # convert relative paths to absolute paths
 	if filename == SAVE_DIR:
 		raise ValueError("Empty filename")
 	#check if file exists in db
 	if filename.exists() and not exist_ok:
 		if file_in_db(filename):
-			raise ValueError(f"File {shortern_path(filename)} already in database")
+			raise ValueError(f"File {shorten_path(filename)} already in database")
 		else:
-			raise FileExistsError(f"File {shortern_path(filename)} already exists")
+			warnings.warn(f"File {shorten_path(filename)} already exists")
 	if archive_filename is None:
 		with open(filename, "wb") as f:
 			f.write(resp.content)
@@ -179,7 +181,7 @@ def download_file(
 				elif old_path.is_dir():
 					try:
 						shutil.rmtree(filename)
-					except FileNotFoundError: #ignore if target directory doesn't exist
+					except FileNotFoundError:  #ignore if target directory doesn't exist
 						pass
 					shutil.copytree(old_path, filename)
 				else:
@@ -192,7 +194,7 @@ def file_in_db(filename: Path) -> bool:
 		cursor.execute("SELECT COUNT(filename) FROM mirrors WHERE filename = ?", (str(filename), ))
 		return cursor.fetchone()[0] > 0
 
-def shortern_path(filename: Union[str, Path]) -> str:
+def shorten_path(filename: Union[str, Path]) -> str:
 	"""shorten /home/user/ to ~"""
 	filename = Path(filename)
 	try:
