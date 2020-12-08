@@ -1,9 +1,11 @@
 import cgi
+import os
 import shutil
 import sqlite3
+import subprocess
 import warnings
 from pathlib import Path
-from tempfile import NamedTemporaryFile, TemporaryDirectory, TemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Union
 from urllib.parse import urlparse
 
@@ -15,8 +17,9 @@ from click_aliases import ClickAliasedGroup
 MIRROR_DIR = Path.home().joinpath(".mirror")
 DB_PATH = MIRROR_DIR.joinpath("db")
 SAVE_DIR = MIRROR_DIR.joinpath("bin")
-conn: sqlite3.Connection = None
-cursor: sqlite3.Cursor = None
+
+conn: sqlite3.Connection
+cursor: sqlite3.Cursor
 
 class OctalParamType(click.ParamType):
 	"""chmod-like octal parameters"""
@@ -41,7 +44,7 @@ def main():
 	cursor = conn.cursor()
 	with conn:
 		cursor.execute(
-			"CREATE TABLE IF NOT EXISTS mirrors (filename text, url text, archive_filename text);"
+			"CREATE TABLE IF NOT EXISTS mirrors (filename text, url text, archive_filename text, post_install text);"
 		)
 	#run cli
 	mirror()
@@ -55,15 +58,23 @@ def mirror():
 @click.argument("url")
 @click.option("--filename", "-f", type=Path)
 @click.option("--mode", "-m", type=OCTAL_PARAM, default="755", show_default=True)
-def add_file(url: str, filename: Path, mode: int):
+@click.option(
+	"--post-install", "--post", "-p", help="arbitary shell script to run after installation"
+)
+def add_file(url: str, filename: Path, mode: int, post_install: str):
 	print(f"Adding {url}")
 	try:
 		filename = download_file(url, filename)
 	except (ValueError, FileExistsError, requests.exceptions.HTTPError) as e:
 		raise ClickException(str(e)) from e
 	filename.chmod(mode)
+	
+	run_post_install(filename, post_install)
+	
 	with conn:
-		cursor.execute("INSERT INTO mirrors VALUES(?, ?, ?)", (str(filename), url, None))
+		cursor.execute(
+			"INSERT INTO mirrors VALUES(?, ?, ?, ?)", (str(filename), url, None, post_install)
+		)
 	print(f"Added {url} at {shorten_path(filename)}")
 
 @mirror.command(aliases=["add-ar", "adda"])
@@ -71,16 +82,23 @@ def add_file(url: str, filename: Path, mode: int):
 @click.argument("archive_filename")
 @click.option("--filename", "-f", type=Path)
 @click.option("--mode", "-m", type=OCTAL_PARAM, default="755", show_default=True)
-def add_archive(url: str, archive_filename, filename: Path, mode: int):
+@click.option(
+	"--post-install", "--post", "-p", help="arbitary shell script to run after installation"
+)
+def add_archive(url: str, archive_filename: str, filename: Path, mode: int, post_install: str):
 	print(f"Adding archive {url}")
 	try:
 		filename = download_file(url, filename, archive_filename)
 	except (ValueError, FileExistsError) as e:
 		raise ClickException(str(e)) from e
 	filename.chmod(mode)
+	
+	run_post_install(filename, post_install)
+	
 	with conn:
 		cursor.execute(
-			"INSERT INTO mirrors VALUES(?, ?, ?)", (str(filename), url, archive_filename)
+			"INSERT INTO mirrors VALUES(?, ?, ?, ?)",
+			(str(filename), url, archive_filename, post_install)
 		)
 	print(f"Added archive {url} at {shorten_path(filename)}")
 
@@ -99,14 +117,17 @@ def list_files():
 @mirror.command(aliases=["update", "u"])
 def update_files():
 	with conn:
-		for filename, url, archive_filename in cursor.execute(
-			"SELECT filename, url, archive_filename FROM mirrors"
+		for filename, url, archive_filename, post_install in cursor.execute(
+			"SELECT filename, url, archive_filename, post_install FROM mirrors"
 		):
+			filename = Path(filename)
 			print(f"Updating {shorten_path(filename)} with {url}")
 			try:
 				download_file(url, filename, archive_filename, exist_ok=True)
 			except (ValueError, FileExistsError, requests.exceptions.HTTPError) as e:
 				raise ClickException(str(e)) from e
+			
+			run_post_install(filename, post_install)
 	print("Updated!")
 
 @mirror.command(aliases=["rm", "r"])
@@ -134,8 +155,15 @@ def delete_db():
 		shutil.rmtree(SAVE_DIR)
 		DB_PATH.unlink()
 
+@mirror.command(aliases=["sqlite"])
+def sqlite_shell():
+	subprocess.run(["sqlite3", DB_PATH])
+
 def download_file(
-	url: str, filename: Union[str, Path], archive_filename=None, exist_ok: bool = False
+	url: str,
+	filename: Union[str, Path],
+	archive_filename: str = None,
+	exist_ok: bool = False
 ) -> Path:
 	resp = requests.get(url)
 	resp.raise_for_status()
@@ -154,6 +182,7 @@ def download_file(
 			filename = resp_filename
 	else:
 		filename = Path(filename)
+	
 	filename = filename.expanduser().resolve()  # convert relative paths to absolute paths
 	if filename == SAVE_DIR:
 		raise ValueError("Empty filename")
@@ -187,6 +216,14 @@ def download_file(
 				else:
 					raise ValueError(f"File {archive_filename} isn't a file or a directory")
 	return filename
+
+def run_post_install(filename: Path, post_install: str):
+	if post_install is not None:
+		os.chdir(filename.parent)
+		try:
+			subprocess.run(post_install, shell=True, check=True)
+		except subprocess.CalledProcessError as e:
+			raise ClickException(str(e)) from e
 
 def file_in_db(filename: Path) -> bool:
 	"""check if file is in the database"""
