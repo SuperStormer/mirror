@@ -43,7 +43,12 @@ def main():
 	cursor = conn.cursor()
 	with conn:
 		cursor.execute(
-			"CREATE TABLE IF NOT EXISTS mirrors (filename text, url text, archive_filename text, post_install text);"
+			"""CREATE TABLE IF NOT EXISTS mirrors (
+				filename text, 
+				url text, 
+				archive_filename text, 
+				post_install text
+			);"""
 		)
 	#run cli
 	mirror()
