@@ -3,7 +3,6 @@ import os
 import shutil
 import sqlite3
 import subprocess
-import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Union
@@ -138,7 +137,7 @@ def remove_file(filename: str, glob: bool):
 	print(f"Deleting {shorten_path(path)}")
 	#error handling
 	if not path.exists():
-		warnings.warn("File doesn't exist in filesystem")
+		print("Warning: File doesn't exist in filesystem")
 	if not glob and not file_in_db(path):
 		raise ClickException(f"File {shorten_path(path)} not in database")
 	#handle db
@@ -157,7 +156,7 @@ def delete_db():
 
 @mirror.command(aliases=["sqlite"])
 def sqlite_shell():
-	subprocess.run(["sqlite3", DB_PATH])
+	subprocess.run(["sqlite3", DB_PATH], check=False)
 
 def download_file(
 	url: str,
@@ -191,7 +190,7 @@ def download_file(
 		if file_in_db(filename):
 			raise ValueError(f"File {shorten_path(filename)} already in database")
 		else:
-			warnings.warn(f"File {shorten_path(filename)} already exists")
+			print(f"Warning: File {shorten_path(filename)} already exists")
 	if archive_filename is None:
 		with open(filename, "wb") as f:
 			f.write(resp.content)
