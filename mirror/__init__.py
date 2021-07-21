@@ -25,6 +25,8 @@ class OctalParamType(click.ParamType):
 	name = "integer"
 	
 	def convert(self, value, param, ctx):
+		if isinstance(value, int):
+			return value
 		try:
 			return int(value, 8)
 		except ValueError:
@@ -35,9 +37,11 @@ OCTAL_PARAM = OctalParamType()
 def main():
 	global conn
 	global cursor
+	
 	#create dirs
 	SAVE_DIR.mkdir(parents=True, exist_ok=True)
 	DB_PATH.touch(exist_ok=True)
+	
 	#setup db
 	conn = sqlite3.connect(DB_PATH)
 	cursor = conn.cursor()
@@ -50,6 +54,7 @@ def main():
 				post_install text
 			);"""
 		)
+	
 	#run cli
 	mirror()
 	conn.close()
@@ -171,6 +176,7 @@ def download_file(
 ) -> Path:
 	resp = requests.get(url)
 	resp.raise_for_status()
+	
 	#get the filename from the response
 	try:
 		resp_filename = SAVE_DIR.joinpath("a").with_name(
@@ -190,6 +196,7 @@ def download_file(
 	filename = filename.expanduser().resolve()  # convert relative paths to absolute paths
 	if filename == SAVE_DIR:
 		raise ValueError("Empty filename")
+	
 	#check if file exists in db
 	if filename.exists() and not exist_ok:
 		if file_in_db(filename):
